@@ -3,12 +3,20 @@ package main
 import (
 	"bufio"
 	"encoding/csv"
-	"errors"
 	"fmt"
-	"io"
 	"os"
 	"strings"
+	"sync"
+	"time"
 )
+
+// Results of questions (correct or incorrect)
+type Results struct {
+	correct    int
+	incorrect  int
+	unanswered int
+	mutex      sync.Mutex
+}
 
 func main() {
 	cmdLineArgs := os.Args[1:]
@@ -33,60 +41,86 @@ func main() {
 		defer csvFile.Close()
 
 		csvReader := csv.NewReader(bufio.NewReader(csvFile))
-		right := 0
-		wrong := 0
+		var results Results
 
-		var inReader *bufio.Reader = bufio.NewReader(os.Stdin)
-		fmt.Printf("%T\n", inReader)
+		var inReader = bufio.NewReader(os.Stdin)
+		fmt.Printf("Press any key to continue: ")
+		inReader.ReadString('\n')
+		go Countdown(&results)
 
-		for {
-			line, err := csvReader.Read()
-			if err == io.EOF {
-				break
-			} else if err != nil {
-				fmt.Println(err.Error())
-				continue
-			}
+		lines, err := csvReader.ReadAll()
+		if err != nil {
+			fmt.Println(err.Error())
+			os.Exit(1)
+		}
 
+		results.mutex.Lock()
+		results.unanswered = len(lines)
+		results.mutex.Unlock()
+
+		for _, line := range lines {
 			q := Question{}
 			err = q.LoadQuestion(line)
 			if err != nil {
 				fmt.Println(err.Error())
 				continue
 			}
-			q.Ask(&right, &wrong, inReader)
+			q.Ask(&results, inReader)
 		}
-		fmt.Printf("%d correct, %d incorrect\n", right, wrong)
+		results.Print()
 	}
+}
+
+func (results *Results) Print() {
+	results.mutex.Lock()
+	fmt.Printf("%d correct, %d incorrect\n", results.correct, results.incorrect+results.unanswered)
+	results.mutex.Unlock()
+}
+
+func Countdown(results *Results) {
+
+	timer := time.NewTimer(30 * time.Second)
+	<-timer.C
+
+	fmt.Println()
+	fmt.Println("Time's up!")
+	results.Print()
+	os.Exit(0)
 }
 
 /* question */
 
+// Question struct
 type Question struct {
 	question string
 	answer   string
 }
 
-func (q Question) Ask(right *int, wrong *int, reader *bufio.Reader) {
+// Ask question to command line, and retrieve user's answer
+func (q Question) Ask(results *Results, reader *bufio.Reader) {
 	fmt.Printf("%s ", q.question)
 	userAnswer, _ := reader.ReadString('\n')
 	userAnswer = strings.TrimSuffix(userAnswer, "\n")
 	userAnswer = strings.TrimSuffix(userAnswer, "\r")
+	results.mutex.Lock()
 	if userAnswer == q.answer {
-		*right += 1
+		results.correct++
 		fmt.Println("Correct")
 	} else {
-		*wrong += 1
+		results.incorrect++
 		fmt.Println("Incorrect")
 	}
+	results.unanswered--
+	results.mutex.Unlock()
 }
 
+// LoadQuestion (split question CSV data into question and answer)
 func (q *Question) LoadQuestion(qAndA []string) error {
 
-	var err error = nil
+	var err error
 
 	if len(qAndA) != 2 {
-		err = errors.New(fmt.Sprintf("Invalid question format for \"%s\"", qAndA))
+		err = fmt.Errorf("Invalid question format for \"%s\"", qAndA)
 		return err
 	}
 	q.question = qAndA[0]
