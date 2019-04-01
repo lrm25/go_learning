@@ -36,17 +36,54 @@ func main() {
 
 	jsonMap := make(map[string]Segment)
 	json.Unmarshal(fileBuffer, &jsonMap)
-	fmt.Println(jsonMap)
 
-	http.ListenAndServe(":8080", defaultMux())
+	http.ListenAndServe(":8080", defaultMux(&jsonMap))
 }
 
-func defaultMux() *http.ServeMux {
+func introHandler(introSegment *Segment) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		displaySegData(w, introSegment)
+	})
+}
+
+func optionHandler(segmentMap *map[string]Segment) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.ParseForm()
+		if len(r.Form.Get("option")) == 0 {
+			fmt.Fprintf(w, "You selected nothing.  The end.")
+		} else {
+			segment := (*segmentMap)[r.Form.Get("option")]
+			displaySegData(w, &segment)
+		}
+	})
+}
+
+func displaySegData(w http.ResponseWriter, segment *Segment) {
+
+	fmt.Fprintf(w, "<html><body><h1>%s</h1>", segment.Title)
+	for _, bodyStr := range segment.Story {
+		fmt.Fprintf(w, "<p>%s</p>", bodyStr)
+	}
+	if 0 < len(segment.Options) {
+		fmt.Fprintf(w, "<form action=/choose method=\"get\">")
+		for _, option := range segment.Options {
+			fmt.Fprintf(w, "<input type=\"radio\" name=\"option\" value=\"%s\">%s</input><br>", option.Arc, option.Text)
+		}
+		fmt.Fprintf(w, "<input type=\"submit\" value=\"Submit\">")
+		fmt.Fprintf(w, "</form>")
+	}
+	fmt.Fprintf(w, "</body></html>")
+}
+
+func defaultMux(segmentMap *map[string]Segment) *http.ServeMux {
+
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", hello)
-	return mux
-}
 
-func hello(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintln(w, "Hello, gopher!")
+	introSegment := (*segmentMap)["intro"]
+	introHandler := introHandler(&introSegment)
+	mux.Handle("/", introHandler)
+
+	optionHandler := optionHandler(segmentMap)
+	mux.Handle("/choose", optionHandler)
+	return mux
 }
